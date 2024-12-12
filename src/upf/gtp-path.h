@@ -27,11 +27,19 @@
 extern "C" {
 #endif
 
+typedef struct vupf_message_s {
+    uint32_t teid;
+    uint8_t qfi;
+    uint32_t buflen;
+} vupf_message_t;
+
 int upf_gtp_init(void);
 void upf_gtp_final(void);
 
 int upf_gtp_open(void);
 void upf_gtp_close(void);
+
+
 
 #ifdef __cplusplus
 }

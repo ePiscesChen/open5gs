@@ -300,6 +300,90 @@ bool ogs_pfcp_up_handle_pdr(
     return true;
 }
 
+bool ogs_send_qfi_pdu(
+        ogs_pfcp_pdr_t *pdr, ogs_pkbuf_t *sendbuf,
+        ogs_pfcp_user_plane_report_t *report)
+{
+    ogs_pfcp_far_t *far = NULL;
+    ogs_gtp_node_t *gnode = NULL;
+    char buf[OGS_ADDRSTRLEN];
+    bool buffering;
+    int rv;
+
+    ogs_assert(sendbuf);
+    ogs_assert(pdr);
+    ogs_assert(report);
+
+    far = pdr->far;
+    ogs_assert(far);
+
+    memset(report, 0, sizeof(*report));
+
+    buffering = false;
+    uint8_t qfi = 0;
+
+    gnode = far->gnode;
+    ogs_assert(gnode);
+    ogs_assert(gnode->sock);
+
+    if (!far->gnode) {
+        buffering = true;
+
+    } else {
+        if (far->apply_action & OGS_PFCP_APPLY_ACTION_FORW) {
+            if (far->dst_if == OGS_PFCP_INTERFACE_UNKNOWN) {
+                ogs_error("No Destination Interface");
+                ogs_pkbuf_free(sendbuf);
+            }
+            if (pdr->qer && pdr->qer->qfi) {
+                qfi = pdr->qer->qfi;
+            }
+            ogs_info("Send QFI[%d]", qfi);
+            ogs_log_hexdump(OGS_LOG_INFO, sendbuf->data, sendbuf->len);
+
+            ogs_pkbuf_push(sendbuf, sizeof(uint8_t));
+            *(uint8_t *)sendbuf->data = qfi;
+            ogs_info("Send buflen: %d", sendbuf->len);
+            ogs_log_hexdump(OGS_LOG_INFO, sendbuf->data, sendbuf->len);
+
+            rv = ogs_gtp_sendto(gnode, sendbuf);
+            if (rv != OGS_OK) {
+                if (ogs_socket_errno != OGS_EAGAIN) {
+                    ogs_error("SEND PDU to Peer[%s]",
+                        OGS_ADDR(&gnode->addr, buf));
+                }
+            }
+            ogs_pkbuf_free(sendbuf);
+            // ogs_pfcp_send_g_pdu(pdr, &sendhdr, sendbuf);
+
+        } else if (far->apply_action & OGS_PFCP_APPLY_ACTION_BUFF) {
+            buffering = true;
+
+        } else {
+            ogs_error("Not implemented = %d", far->apply_action);
+            ogs_pkbuf_free(sendbuf);
+        }
+    }
+
+    if (buffering == true) {
+
+        if (far->num_of_buffered_packet == 0) {
+            /* Only the first time a packet is buffered,
+             * it reports downlink notifications. */
+            report->type.downlink_data_report = 1;
+        }
+
+        if (far->num_of_buffered_packet < OGS_MAX_NUM_OF_PACKET_BUFFER) {
+            far->buffered_packet[far->num_of_buffered_packet++] = sendbuf;
+        } else {
+            ogs_pkbuf_free(sendbuf);
+        }
+    }
+
+    return true;
+}
+
+
 bool ogs_pfcp_up_handle_error_indication(
         ogs_pfcp_far_t *far, ogs_pfcp_user_plane_report_t *report)
 {

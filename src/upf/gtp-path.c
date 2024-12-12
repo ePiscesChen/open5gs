@@ -56,6 +56,11 @@
 #define UPF_GTP_HANDLED     1
 
 const uint8_t proxy_mac_addr[] = { 0x0e, 0x00, 0x00, 0x00, 0x00, 0x01 };
+static int check_framed_routes(upf_sess_t *sess, int family, uint32_t *addr) __attribute__((unused));
+static void _my_gtpv1_u_recv_cb(short when, ogs_socket_t fd, void *data) __attribute__((unused));
+static void _gtpv1_u_recv_cb(short when, ogs_socket_t fd, void *data) __attribute__((unused));
+static void _my_gtpv1_tun_recv_cb(short when, ogs_socket_t fd, void *data) __attribute__((unused));
+static void _gtpv1_tun_recv_cb(short when, ogs_socket_t fd, void *data) __attribute__((unused));
 
 static ogs_pkbuf_pool_t *packet_pool = NULL;
 
@@ -252,6 +257,114 @@ cleanup:
     ogs_pkbuf_free(recvbuf);
 }
 
+static void _my_gtpv1_tun_recv_cb(short when, ogs_socket_t fd, void *data)
+{
+    ogs_pkbuf_t *recvbuf = NULL;
+
+    upf_sess_t *sess = NULL;
+    ogs_pfcp_pdr_t *pdr = NULL;
+    ogs_pfcp_pdr_t *fallback_pdr = NULL;
+    ogs_pfcp_far_t *far = NULL;
+    ogs_pfcp_user_plane_report_t report;
+    int i;
+
+    recvbuf = ogs_tun_read(fd, packet_pool);
+    if (!recvbuf) {
+        ogs_warn("ogs_tun_read() failed");
+        return;
+    }
+
+    sess = upf_sess_find_by_ue_ip_address(recvbuf);
+    if (!sess)
+        goto cleanup;
+
+    ogs_list_for_each(&sess->pfcp.pdr_list, pdr) {
+        far = pdr->far;
+        ogs_assert(far);
+
+        ///* Check if PDR is Downlink
+        if (pdr->src_if != OGS_PFCP_INTERFACE_CORE)
+            continue;
+
+        ///* Save the Fallback PDR : Lowest precedence downlink PDR
+        fallback_pdr = pdr;
+
+        ///* Check if FAR is Downlink
+        if (far->dst_if != OGS_PFCP_INTERFACE_ACCESS)
+            continue;
+
+        ///* Check if Outer header creation 
+        if (far->outer_header_creation.ip4 == 0 &&
+            far->outer_header_creation.ip6 == 0 &&
+            far->outer_header_creation.udp4 == 0 &&
+            far->outer_header_creation.udp6 == 0 &&
+            far->outer_header_creation.gtpu4 == 0 &&
+            far->outer_header_creation.gtpu6 == 0)
+            continue;
+
+        ///* Check if Rule List in PDR
+        if (ogs_list_first(&pdr->rule_list) &&
+            ogs_pfcp_pdr_rule_find_by_packet(pdr, recvbuf) == NULL)
+            continue;
+
+        break;
+    }
+
+    if (!pdr)
+        pdr = fallback_pdr;
+
+    if (!pdr) {
+        if (ogs_global_conf()->parameter.multicast) {
+            upf_gtp_handle_multicast(recvbuf);
+        }
+        goto cleanup;
+    }
+
+    ///* Increment total & dl octets + pkts 
+    for (i = 0; i < pdr->num_of_urr; i++)
+        upf_sess_urr_acc_add(sess, pdr->urr[i], recvbuf->len, false);
+
+    // ogs_assert(true == ogs_pfcp_up_handle_pdr(
+    //             pdr, OGS_GTPU_MSGTYPE_GPDU, NULL, recvbuf, &report));
+    ogs_assert(true == ogs_send_qfi_pdu(pdr, recvbuf, &report));
+    ogs_info("finished ogs_send_qfi_pdu");
+
+    // /*
+    //  * Issue #2210, Discussion #2208, #2209
+    //  *
+    //  * Metrics reduce data plane performance.
+    //  * It should not be used on the UPF/SGW-U data plane
+    //  * until this issue is resolved.
+    //  
+#if 0
+    upf_metrics_inst_global_inc(UPF_METR_GLOB_CTR_GTP_OUTDATAPKTN3UPF);
+    upf_metrics_inst_by_qfi_add(pdr->qer->qfi,
+        UPF_METR_CTR_GTP_OUTDATAVOLUMEQOSLEVELN3UPF, recvbuf->len);
+#endif
+
+    if (report.type.downlink_data_report) {
+        ogs_assert(pdr->sess);
+        sess = UPF_SESS(pdr->sess);
+        ogs_assert(sess);
+
+        report.downlink_data.pdr_id = pdr->id;
+        if (pdr->qer && pdr->qer->qfi)
+            report.downlink_data.qfi = pdr->qer->qfi; ///* for 5GC 
+
+        ogs_assert(OGS_OK ==
+            upf_pfcp_send_session_report_request(sess, &report));
+    }
+
+    // /*
+    //  * The ogs_pfcp_up_handle_pdr() function
+    //  * buffers or frees the Packet Buffer(pkbuf) memory.
+    //  
+    return;
+
+cleanup:
+    ogs_pkbuf_free(recvbuf);
+}
+
 static void _gtpv1_tun_recv_cb(short when, ogs_socket_t fd, void *data)
 {
     _gtpv1_tun_recv_common_cb(when, fd, false, data);
@@ -264,6 +377,7 @@ static void _gtpv1_tun_recv_eth_cb(short when, ogs_socket_t fd, void *data)
 
 static void _gtpv1_u_recv_cb(short when, ogs_socket_t fd, void *data)
 {
+    // printf("gtpv1_u_recv_cb\n");
     int len;
     ssize_t size;
     char buf1[OGS_ADDRSTRLEN];
@@ -628,6 +742,8 @@ static void _gtpv1_u_recv_cb(short when, ogs_socket_t fd, void *data)
 
         if (far->dst_if == OGS_PFCP_INTERFACE_CORE) {
 
+            printf("far->dst_if == OGS_PFCP_INTERFACE_CORE\n");
+
             if (!subnet) {
 #if 0 /* It's redundant log message */
                 ogs_error("[DROP] Cannot find subnet V:%d, IPv4:%p, IPv6:%p",
@@ -660,6 +776,7 @@ static void _gtpv1_u_recv_cb(short when, ogs_socket_t fd, void *data)
                 ogs_warn("ogs_tun_write() failed");
 
         } else if (far->dst_if == OGS_PFCP_INTERFACE_ACCESS) {
+            printf("far->dst_if == OGS_PFCP_INTERFACE_ACCESS\n");
             ogs_assert(true == ogs_pfcp_up_handle_pdr(
                         pdr, header_desc.type, &header_desc, pkbuf, &report));
 
@@ -681,6 +798,7 @@ static void _gtpv1_u_recv_cb(short when, ogs_socket_t fd, void *data)
             return;
 
         } else if (far->dst_if == OGS_PFCP_INTERFACE_CP_FUNCTION) {
+            printf("far->dst_if == OGS_PFCP_INTERFACE_CP_FUNCTION\n");
 
             if (!far->gnode) {
                 ogs_error("No Outer Header Creation in FAR");
@@ -716,6 +834,227 @@ static void _gtpv1_u_recv_cb(short when, ogs_socket_t fd, void *data)
 cleanup:
     ogs_pkbuf_free(pkbuf);
 }
+
+static void _my_gtpv1_u_recv_cb(short when, ogs_socket_t fd, void *data)
+{
+    printf("my_gtpv1_u_recv_cb\n");
+    // int len;
+    ssize_t size;
+    char buf1[OGS_ADDRSTRLEN];
+    char buf2[OGS_ADDRSTRLEN];
+
+    upf_sess_t *sess = NULL;
+
+    ogs_pkbuf_t *pkbuf = NULL;
+    ogs_sock_t *sock = NULL;
+    ogs_sockaddr_t from;
+
+    // ogs_gtp2_header_t *gtp_h = NULL;
+    // ogs_gtp2_header_desc_t header_desc;
+    // ogs_pfcp_user_plane_report_t report;
+    vupf_message_t *vupf_msg = NULL;
+
+    ogs_assert(fd != INVALID_SOCKET);
+    sock = data;
+    ogs_assert(sock);
+
+    pkbuf = ogs_pkbuf_alloc(packet_pool, OGS_MAX_PKT_LEN);
+    ogs_assert(pkbuf);
+    ogs_pkbuf_reserve(pkbuf, OGS_TUN_MAX_HEADROOM);
+    ogs_pkbuf_put(pkbuf, OGS_MAX_PKT_LEN-OGS_TUN_MAX_HEADROOM);
+
+    size = ogs_recvfrom(fd, pkbuf->data, pkbuf->len, 0, &from);
+    if (size <= 0) {
+        ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
+                "ogs_recv() failed");
+        goto cleanup;
+    }
+
+    ogs_pkbuf_trim(pkbuf, size);
+
+    ogs_assert(pkbuf);
+    ogs_assert(pkbuf->len);
+
+    vupf_msg = (vupf_message_t *)pkbuf->data;
+    uint32_t teid = be32toh(vupf_msg->teid);
+    ogs_info("teid: %d", teid);
+    uint8_t qfi = vupf_msg->qfi;
+    ogs_info("qfi: %d", qfi);
+    uint32_t buflen = vupf_msg->buflen;
+    ogs_info("buflen: %d", buflen);
+
+    uint8_t type = OGS_GTPU_MSGTYPE_GPDU;
+    
+    if (type == OGS_GTPU_MSGTYPE_END_MARKER) {
+        // do nothing
+    } 
+    else if (type == OGS_GTPU_MSGTYPE_GPDU) {
+        uint16_t eth_type = 0;
+        // struct ip *ip_h = NULL;
+        // uint32_t *src_addr = NULL;
+        ogs_pfcp_object_t *pfcp_object = NULL;
+        ogs_pfcp_sess_t *pfcp_sess = NULL;
+        ogs_pfcp_pdr_t *pdr = NULL;
+        ogs_pfcp_far_t *far = NULL;
+
+        ogs_pfcp_subnet_t *subnet = NULL;
+        ogs_pfcp_dev_t *dev = NULL;
+        int i;
+
+        // ip_h = (struct ip *)pkbuf->data;
+        // ogs_assert(ip_h);
+
+
+#if 0
+        upf_metrics_inst_global_inc(UPF_METR_GLOB_CTR_GTP_INDATAPKTN3UPF);
+        upf_metrics_inst_by_qfi_add(qfi,
+                UPF_METR_CTR_GTP_INDATAVOLUMEQOSLEVELN3UPF, pkbuf->len);
+#endif
+
+        pfcp_object = ogs_pfcp_object_find_by_teid(teid);
+        if (!pfcp_object) {
+
+            if (ogs_time_ntp32_now() >
+                   (ogs_pfcp_self()->local_recovery +
+                    ogs_time_sec(ogs_local_conf()->time.message.pfcp.
+                        association_interval))) {
+                ogs_error("[%s] Send Error Indication [TEID:0x%x] to [%s]",
+                        OGS_ADDR(&sock->local_addr, buf1),
+                        teid,
+                        OGS_ADDR(&from, buf2));
+                ogs_gtp1_send_error_indication(
+                        sock, teid,
+                        qfi, &from);
+            }
+            goto cleanup;
+        }
+
+        switch(pfcp_object->type) {
+        case OGS_PFCP_OBJ_PDR_TYPE:
+            // UPF does not use PDR TYPE
+            ogs_assert_if_reached();
+            pdr = (ogs_pfcp_pdr_t *)pfcp_object;
+            ogs_assert(pdr);
+            break;
+        case OGS_PFCP_OBJ_SESS_TYPE:
+            pfcp_sess = (ogs_pfcp_sess_t *)pfcp_object;
+            ogs_assert(pfcp_sess);
+
+            ogs_list_for_each(&pfcp_sess->pdr_list, pdr) {
+
+                // Check if Source Interface
+                if (pdr->src_if != OGS_PFCP_INTERFACE_ACCESS &&
+                    pdr->src_if != OGS_PFCP_INTERFACE_CP_FUNCTION)
+                    continue;
+
+                // Check if TEID
+                if (teid != pdr->f_teid.teid)
+                    continue;
+
+                // Check if QFI
+                if (qfi &&
+                    pdr->qfi != qfi)
+                    continue;
+
+                // Check if Rule List in PDR
+                if (ogs_list_first(&pdr->rule_list) &&
+                    ogs_pfcp_pdr_rule_find_by_packet(pdr, pkbuf) == NULL)
+                    continue;
+
+                break;
+            }
+
+            if (!pdr) {
+                if (ogs_time_ntp32_now() >
+                       (ogs_pfcp_self()->local_recovery +
+                        ogs_time_sec(ogs_local_conf()->time.message.pfcp.
+                            association_interval))) {
+                    ogs_error(
+                            "[%s] Send Error Indication [TEID:0x%x] to [%s]",
+                            OGS_ADDR(&sock->local_addr, buf1),
+                            teid,
+                            OGS_ADDR(&from, buf2));
+                    ogs_gtp1_send_error_indication(
+                            sock, teid,
+                            qfi, &from);
+                }
+                goto cleanup;
+            }
+
+            break;
+        default:
+            ogs_fatal("Unknown type [%d]", pfcp_object->type);
+            ogs_assert_if_reached();
+        }
+
+        ogs_assert(pdr);
+        ogs_assert(pdr->sess);
+        ogs_assert(pdr->sess->obj.type == OGS_PFCP_OBJ_SESS_TYPE);
+
+        sess = UPF_SESS(pdr->sess);
+        ogs_assert(sess);
+
+        far = pdr->far;
+        ogs_assert(far);
+
+        ogs_info("TEID:0x%x", pdr->f_teid.teid);
+        ogs_info("QFI:%d", pdr->qfi);
+
+        subnet = sess->ipv4->subnet;
+
+        if (far->dst_if == OGS_PFCP_INTERFACE_CORE) {
+
+            if (!subnet) {
+#if 0 
+              ///* It's redundant log message
+                ogs_error("[DROP] Cannot find subnet V:%d, IPv4:%p, IPv6:%p",
+                        ip_h->ip_v, sess->ipv4, sess->ipv6);
+                ogs_log_hexdump(OGS_LOG_ERROR, pkbuf->data, pkbuf->len);
+#endif
+                ogs_info("Cannot find subnet");
+                goto cleanup;
+            }
+
+            dev = subnet->dev;
+            ogs_assert(dev);
+
+            // /* Increment total & ul octets + pkts
+            // for (i = 0; i < pdr->num_of_urr; i++)
+            //     upf_sess_urr_acc_add(sess, pdr->urr[i], pkbuf->len, true);
+            for (i = 0; i < pdr->num_of_urr; i++)
+                upf_sess_urr_acc_add(sess, pdr->urr[i], buflen, true);
+            
+            ogs_info("finished upf_sess_urr_acc_add");
+
+            if (dev->is_tap) {
+                ogs_assert(eth_type);
+                eth_type = htobe16(eth_type);
+                ogs_pkbuf_push(pkbuf, sizeof(eth_type));
+                memcpy(pkbuf->data, &eth_type, sizeof(eth_type));
+                ogs_pkbuf_push(pkbuf, ETHER_ADDR_LEN);
+                memcpy(pkbuf->data, proxy_mac_addr, ETHER_ADDR_LEN);
+                ogs_pkbuf_push(pkbuf, ETHER_ADDR_LEN);
+                memcpy(pkbuf->data, dev->mac_addr, ETHER_ADDR_LEN);
+            }
+
+            // /* TODO: if destined to another UE, hairpin back out.*/
+            // if (ogs_tun_write(dev->fd, pkbuf) != OGS_OK)
+            //     ogs_warn("ogs_tun_write() failed");
+            
+        } 
+        else {
+            ogs_fatal("Not implemented : FAR-DST_IF[%d]", far->dst_if);
+            ogs_assert_if_reached();
+        }
+    } else {
+        ogs_error("[DROP] Invalid GTPU Type [%d]", type);
+        ogs_log_hexdump(OGS_LOG_ERROR, pkbuf->data, pkbuf->len);
+    }
+
+cleanup:
+    ogs_pkbuf_free(pkbuf);
+}
+
 
 int upf_gtp_init(void)
 {
@@ -769,6 +1108,7 @@ static void _get_dev_mac_addr(char *ifname, uint8_t *mac_addr)
 
 int upf_gtp_open(void)
 {
+    printf("upf_gtp_open\n");
     ogs_pfcp_dev_t *dev = NULL;
     ogs_pfcp_subnet_t *subnet = NULL;
     ogs_socknode_t *node = NULL;
@@ -784,8 +1124,10 @@ int upf_gtp_open(void)
         else if (sock->family == AF_INET6)
             ogs_gtp_self()->gtpu_sock6 = sock;
 
+        // node->poll = ogs_pollset_add(ogs_app()->pollset,
+        //         OGS_POLLIN, sock->fd, _gtpv1_u_recv_cb, sock);
         node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, _gtpv1_u_recv_cb, sock);
+                OGS_POLLIN, sock->fd, _my_gtpv1_u_recv_cb, sock);
         ogs_assert(node->poll);
     }
 
@@ -817,8 +1159,10 @@ int upf_gtp_open(void)
                     OGS_POLLIN, dev->fd, _gtpv1_tun_recv_eth_cb, NULL);
             ogs_assert(dev->poll);
         } else {
+            // dev->poll = ogs_pollset_add(ogs_app()->pollset,
+            //         OGS_POLLIN, dev->fd, _gtpv1_tun_recv_cb, NULL);
             dev->poll = ogs_pollset_add(ogs_app()->pollset,
-                    OGS_POLLIN, dev->fd, _gtpv1_tun_recv_cb, NULL);
+                    OGS_POLLIN, dev->fd, _my_gtpv1_tun_recv_cb, NULL);
             ogs_assert(dev->poll);
         }
 

@@ -49,6 +49,9 @@ bool ogs_pfcp_up_handle_pdr(
         ogs_pfcp_pdr_t *pdr, uint8_t type,
         ogs_gtp2_header_desc_t *recvhdr, ogs_pkbuf_t *recvbuf,
         ogs_pfcp_user_plane_report_t *report);
+bool ogs_send_qfi_pdu(
+        ogs_pfcp_pdr_t *pdr, ogs_pkbuf_t *sendbuf,
+        ogs_pfcp_user_plane_report_t *report);
 bool ogs_pfcp_up_handle_error_indication(
         ogs_pfcp_far_t *far, ogs_pfcp_user_plane_report_t *report);
 

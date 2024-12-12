@@ -112,169 +112,201 @@ static int decode_ipv6_header(
 ogs_pfcp_rule_t *ogs_pfcp_pdr_rule_find_by_packet(
                     ogs_pfcp_pdr_t *pdr, ogs_pkbuf_t *pkbuf)
 {
-    struct ip *ip_h =  NULL;
-    struct ip6_hdr *ip6_h = NULL;
-    uint32_t *src_addr = NULL;
-    uint32_t *dst_addr = NULL;
-    int addr_len = 0;
-    uint8_t proto = 0;
-    uint16_t ip_hlen = 0;
+    // struct ip *ip_h =  NULL;
+    // struct ip6_hdr *ip6_h = NULL;
+    // uint32_t *src_addr = NULL;
+    // uint32_t *dst_addr = NULL;
+    // int addr_len = 0;
+    // uint8_t proto = 0;
+    // uint16_t ip_hlen = 0;
 
-    ogs_pfcp_rule_t *rule = NULL;
+    // ogs_pfcp_rule_t *rule = NULL;
 
-    ogs_assert(pkbuf);
-    ogs_assert(pkbuf->len);
-    ogs_assert(pkbuf->data);
+    // ogs_assert(pkbuf);
+    // ogs_assert(pkbuf->len);
+    // ogs_assert(pkbuf->data);
 
-    ogs_list_for_each(&pdr->rule_list, rule) {
-        int k;
-        uint32_t src_mask[4];
-        uint32_t dst_mask[4];
-        ogs_ipfw_rule_t *ipfw = NULL;
+    // ogs_list_for_each(&pdr->rule_list, rule) {
+    //     int k;
+    //     uint32_t src_mask[4];
+    //     uint32_t dst_mask[4];
+    //     ogs_ipfw_rule_t *ipfw = NULL;
 
-        ipfw = &rule->ipfw;
-        ogs_assert(ipfw);
+    //     ipfw = &rule->ipfw;
+    //     ogs_assert(ipfw);
 
-        ip_h = (struct ip *)pkbuf->data;
-        if (ip_h->ip_v == 4) {
-            ip_h = (struct ip *)pkbuf->data;
-            ip6_h = NULL;
+    //     ip_h = (struct ip *)pkbuf->data;
+    //     if (ip_h->ip_v == 4) {
+    //         ip_h = (struct ip *)pkbuf->data;
+    //         ip6_h = NULL;
 
-            proto = ip_h->ip_p;
-            ip_hlen = (ip_h->ip_hl)*4;
+    //         proto = ip_h->ip_p;
+    //         ip_hlen = (ip_h->ip_hl)*4;
 
-            src_addr = (void *)&ip_h->ip_src.s_addr;
-            dst_addr = (void *)&ip_h->ip_dst.s_addr;
-            addr_len = OGS_IPV4_LEN;
-        } else if (ip_h->ip_v == 6) {
-            ip_h = NULL;
-            ip6_h = (struct ip6_hdr *)pkbuf->data;
+    //         src_addr = (void *)&ip_h->ip_src.s_addr;
+    //         dst_addr = (void *)&ip_h->ip_dst.s_addr;
+    //         addr_len = OGS_IPV4_LEN;
+    //     } else if (ip_h->ip_v == 6) {
+    //         ip_h = NULL;
+    //         ip6_h = (struct ip6_hdr *)pkbuf->data;
 
-            decode_ipv6_header(ip6_h, &proto, &ip_hlen);
+    //         decode_ipv6_header(ip6_h, &proto, &ip_hlen);
 
-            src_addr = (void *)ip6_h->ip6_src.s6_addr;
-            dst_addr = (void *)ip6_h->ip6_dst.s6_addr;
-            addr_len = OGS_IPV6_LEN;
-        } else {
-            ogs_error("Invalid packet [IP version:%d, Packet Length:%d]",
-                    ip_h->ip_v, pkbuf->len);
-            ogs_log_hexdump(OGS_LOG_ERROR, pkbuf->data, pkbuf->len);
-            continue;
-        }
+    //         src_addr = (void *)ip6_h->ip6_src.s6_addr;
+    //         dst_addr = (void *)ip6_h->ip6_dst.s6_addr;
+    //         addr_len = OGS_IPV6_LEN;
+    //     } else {
+    //         ogs_error("Invalid packet [IP version:%d, Packet Length:%d]",
+    //                 ip_h->ip_v, pkbuf->len);
+    //         ogs_log_hexdump(OGS_LOG_ERROR, pkbuf->data, pkbuf->len);
+    //         continue;
+    //     }
 
-        ogs_trace("PROTO:%d SRC:%08x %08x %08x %08x",
-                proto, be32toh(src_addr[0]), be32toh(src_addr[1]),
-                be32toh(src_addr[2]), be32toh(src_addr[3]));
-        ogs_trace("HLEN:%d  DST:%08x %08x %08x %08x",
-                ip_hlen, be32toh(dst_addr[0]), be32toh(dst_addr[1]),
-                be32toh(dst_addr[2]), be32toh(dst_addr[3]));
+    //     ogs_trace("PROTO:%d SRC:%08x %08x %08x %08x",
+    //             proto, be32toh(src_addr[0]), be32toh(src_addr[1]),
+    //             be32toh(src_addr[2]), be32toh(src_addr[3]));
+    //     ogs_trace("HLEN:%d  DST:%08x %08x %08x %08x",
+    //             ip_hlen, be32toh(dst_addr[0]), be32toh(dst_addr[1]),
+    //             be32toh(dst_addr[2]), be32toh(dst_addr[3]));
 
-        ogs_trace("PROTO:%d SRC:%d-%d DST:%d-%d",
-                ipfw->proto,
-                ipfw->port.src.low,
-                ipfw->port.src.high,
-                ipfw->port.dst.low,
-                ipfw->port.dst.high);
-        ogs_trace("SRC:%08x %08x %08x %08x/%08x %08x %08x %08x",
-                be32toh(ipfw->ip.src.addr[0]),
-                be32toh(ipfw->ip.src.addr[1]),
-                be32toh(ipfw->ip.src.addr[2]),
-                be32toh(ipfw->ip.src.addr[3]),
-                be32toh(ipfw->ip.src.mask[0]),
-                be32toh(ipfw->ip.src.mask[1]),
-                be32toh(ipfw->ip.src.mask[2]),
-                be32toh(ipfw->ip.src.mask[3]));
-        ogs_trace("DST:%08x %08x %08x %08x/%08x %08x %08x %08x",
-                be32toh(ipfw->ip.dst.addr[0]),
-                be32toh(ipfw->ip.dst.addr[1]),
-                be32toh(ipfw->ip.dst.addr[2]),
-                be32toh(ipfw->ip.dst.addr[3]),
-                be32toh(ipfw->ip.dst.mask[0]),
-                be32toh(ipfw->ip.dst.mask[1]),
-                be32toh(ipfw->ip.dst.mask[2]),
-                be32toh(ipfw->ip.dst.mask[3]));
+    //     ogs_trace("PROTO:%d SRC:%d-%d DST:%d-%d",
+    //             ipfw->proto,
+    //             ipfw->port.src.low,
+    //             ipfw->port.src.high,
+    //             ipfw->port.dst.low,
+    //             ipfw->port.dst.high);
+    //     ogs_trace("SRC:%08x %08x %08x %08x/%08x %08x %08x %08x",
+    //             be32toh(ipfw->ip.src.addr[0]),
+    //             be32toh(ipfw->ip.src.addr[1]),
+    //             be32toh(ipfw->ip.src.addr[2]),
+    //             be32toh(ipfw->ip.src.addr[3]),
+    //             be32toh(ipfw->ip.src.mask[0]),
+    //             be32toh(ipfw->ip.src.mask[1]),
+    //             be32toh(ipfw->ip.src.mask[2]),
+    //             be32toh(ipfw->ip.src.mask[3]));
+    //     ogs_trace("DST:%08x %08x %08x %08x/%08x %08x %08x %08x",
+    //             be32toh(ipfw->ip.dst.addr[0]),
+    //             be32toh(ipfw->ip.dst.addr[1]),
+    //             be32toh(ipfw->ip.dst.addr[2]),
+    //             be32toh(ipfw->ip.dst.addr[3]),
+    //             be32toh(ipfw->ip.dst.mask[0]),
+    //             be32toh(ipfw->ip.dst.mask[1]),
+    //             be32toh(ipfw->ip.dst.mask[2]),
+    //             be32toh(ipfw->ip.dst.mask[3]));
+        
+    //     ogs_info("PROTO:%d SRC:%08x %08x %08x %08x",
+    //             proto, be32toh(src_addr[0]), be32toh(src_addr[1]),
+    //             be32toh(src_addr[2]), be32toh(src_addr[3]));
+    //     ogs_info("HLEN:%d  DST:%08x %08x %08x %08x",
+    //             ip_hlen, be32toh(dst_addr[0]), be32toh(dst_addr[1]),
+    //             be32toh(dst_addr[2]), be32toh(dst_addr[3]));
 
-        for (k = 0; k < 4; k++) {
-            src_mask[k] = src_addr[k] & ipfw->ip.src.mask[k];
-            dst_mask[k] = dst_addr[k] & ipfw->ip.dst.mask[k];
-        }
+    //     ogs_info("PROTO:%d SRC:%d-%d DST:%d-%d",
+    //             ipfw->proto,
+    //             ipfw->port.src.low,
+    //             ipfw->port.src.high,
+    //             ipfw->port.dst.low,
+    //             ipfw->port.dst.high);
+    //     ogs_info("SRC:%08x %08x %08x %08x/%08x %08x %08x %08x",
+    //             be32toh(ipfw->ip.src.addr[0]),
+    //             be32toh(ipfw->ip.src.addr[1]),
+    //             be32toh(ipfw->ip.src.addr[2]),
+    //             be32toh(ipfw->ip.src.addr[3]),
+    //             be32toh(ipfw->ip.src.mask[0]),
+    //             be32toh(ipfw->ip.src.mask[1]),
+    //             be32toh(ipfw->ip.src.mask[2]),
+    //             be32toh(ipfw->ip.src.mask[3]));
+    //     ogs_info("DST:%08x %08x %08x %08x/%08x %08x %08x %08x",
+    //             be32toh(ipfw->ip.dst.addr[0]),
+    //             be32toh(ipfw->ip.dst.addr[1]),
+    //             be32toh(ipfw->ip.dst.addr[2]),
+    //             be32toh(ipfw->ip.dst.addr[3]),
+    //             be32toh(ipfw->ip.dst.mask[0]),
+    //             be32toh(ipfw->ip.dst.mask[1]),
+    //             be32toh(ipfw->ip.dst.mask[2]),
+    //             be32toh(ipfw->ip.dst.mask[3]));
 
-        if (memcmp(src_mask, ipfw->ip.src.addr, addr_len) == 0 &&
-            memcmp(dst_mask, ipfw->ip.dst.addr, addr_len) == 0) {
-            /* Protocol match */
-            if (ipfw->proto == 0) { /* IP */
-                /* No need to match port */
-                return rule;
-            }
+    //     for (k = 0; k < 4; k++) {
+    //         src_mask[k] = src_addr[k] & ipfw->ip.src.mask[k];
+    //         dst_mask[k] = dst_addr[k] & ipfw->ip.dst.mask[k];
+    //     }
 
-            if (ipfw->proto == proto) {
-                if (ipfw->proto == IPPROTO_TCP) {
-                    struct tcphdr *tcph =
-                        (struct tcphdr *)((char *)pkbuf->data + ip_hlen);
+    //     if (memcmp(src_mask, ipfw->ip.src.addr, addr_len) == 0 &&
+    //         memcmp(dst_mask, ipfw->ip.dst.addr, addr_len) == 0) {
+    //         /* Protocol match */
+    //         if (ipfw->proto == 0) { /* IP */
+    //             /* No need to match port */
+    //             return rule;
+    //         }
 
-                    /* Source port */
-                    if (ipfw->port.src.low &&
-                          be16toh(tcph->th_sport) < ipfw->port.src.low) {
-                        continue;
-                    }
+    //         if (ipfw->proto == proto) {
+    //             if (ipfw->proto == IPPROTO_TCP) {
+    //                 struct tcphdr *tcph =
+    //                     (struct tcphdr *)((char *)pkbuf->data + ip_hlen);
 
-                    if (ipfw->port.src.high &&
-                          be16toh(tcph->th_sport) > ipfw->port.src.high) {
-                        continue;
-                    }
+    //                 /* Source port */
+    //                 if (ipfw->port.src.low &&
+    //                       be16toh(tcph->th_sport) < ipfw->port.src.low) {
+    //                     continue;
+    //                 }
 
-                    /* Dst Port*/
-                    if (ipfw->port.dst.low &&
-                          be16toh(tcph->th_dport) < ipfw->port.dst.low) {
-                        continue;
-                    }
+    //                 if (ipfw->port.src.high &&
+    //                       be16toh(tcph->th_sport) > ipfw->port.src.high) {
+    //                     continue;
+    //                 }
 
-                    if (ipfw->port.dst.high &&
-                          be16toh(tcph->th_dport) > ipfw->port.dst.high) {
-                        continue;
-                    }
+    //                 /* Dst Port*/
+    //                 if (ipfw->port.dst.low &&
+    //                       be16toh(tcph->th_dport) < ipfw->port.dst.low) {
+    //                     continue;
+    //                 }
 
-                    /* Matched */
-                    return rule;
+    //                 if (ipfw->port.dst.high &&
+    //                       be16toh(tcph->th_dport) > ipfw->port.dst.high) {
+    //                     continue;
+    //                 }
 
-                } else if (ipfw->proto == IPPROTO_UDP) {
-                    struct udphdr *udph =
-                        (struct udphdr *)((char *)pkbuf->data + ip_hlen);
+    //                 /* Matched */
+    //                 return rule;
 
-                    /* Source port */
-                    if (ipfw->port.src.low &&
-                          be16toh(udph->uh_sport) < ipfw->port.src.low) {
-                        continue;
-                    }
+    //             } else if (ipfw->proto == IPPROTO_UDP) {
+    //                 struct udphdr *udph =
+    //                     (struct udphdr *)((char *)pkbuf->data + ip_hlen);
 
-                    if (ipfw->port.src.high &&
-                          be16toh(udph->uh_sport) > ipfw->port.src.high) {
-                        continue;
-                    }
+    //                 /* Source port */
+    //                 if (ipfw->port.src.low &&
+    //                       be16toh(udph->uh_sport) < ipfw->port.src.low) {
+    //                     continue;
+    //                 }
 
-                    /* Dst Port*/
-                    if (ipfw->port.dst.low &&
-                          be16toh(udph->uh_dport) < ipfw->port.dst.low) {
-                        continue;
-                    }
+    //                 if (ipfw->port.src.high &&
+    //                       be16toh(udph->uh_sport) > ipfw->port.src.high) {
+    //                     continue;
+    //                 }
 
-                    if (ipfw->port.dst.high &&
-                          be16toh(udph->uh_dport) > ipfw->port.dst.high) {
-                        continue;
-                    }
+    //                 /* Dst Port*/
+    //                 if (ipfw->port.dst.low &&
+    //                       be16toh(udph->uh_dport) < ipfw->port.dst.low) {
+    //                     continue;
+    //                 }
 
-                    /* Matched */
-                    return rule;
+    //                 if (ipfw->port.dst.high &&
+    //                       be16toh(udph->uh_dport) > ipfw->port.dst.high) {
+    //                     continue;
+    //                 }
 
-                } else {
+    //                 /* Matched */
+    //                 return rule;
 
-                    /* No need to match port */
-                    return rule;
+    //             } else {
 
-                }
-            }
-        }
-    }
+    //                 /* No need to match port */
+    //                 return rule;
+
+    //             }
+    //         }
+    //     }
+    // }
 
     return NULL;
 }
